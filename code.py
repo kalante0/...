@@ -5,64 +5,60 @@ import seaborn as sns
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
-#  Настройки визуализации
+# Настройки визуализации
 plt.rcParams['font.size'] = 12
 sns.set_style("whitegrid")
 
 
-#  1. ГЕНЕРАЦИЯ РЕАЛИСТИЧНЫХ ОБУЧАЮЩИХ ДАННЫХ
-def prepare_klient_data():
-    klienty = []
+# 1. ЗАГРУЗКА И ПОДГОТОВКА ДАННЫХ
+def load_mall_customer_data(path='Mall_Customers_Enhanced.csv'):
+    try:
+        df = pd.read_csv(path)
 
-    for i in range(5000):  # большой датасет
-        vozrast = np.random.randint(18, 70)
-        pokupki = np.random.randint(0, 40)
-        sredniy_chek = np.random.uniform(200, 30000)
-        akcii = np.random.choice([0, 1])
-        otsenka = np.random.uniform(1, 5)
+        df = df.dropna(subset=['Age', 'Annual Income (k$)', 'Spending Score (1-100)', 
+                               'Estimated Savings (k$)', 'Credit Score', 'Loyalty Years'])
 
-        #  Реалистичная вероятность лояльности
-        prob = (
-            0.30 * (pokupki / 40) +
-            0.40 * (sredniy_chek / 30000) +
-            0.20 * (otsenka / 5) +
-            0.10 * akcii
-        )
-
-        #  Добавляем шум (реалистичность)
-        prob += np.random.normal(0, 0.08)
-
-        #  Ограничиваем диапазон
-        prob = max(0, min(1, prob))
-
-        #  Генерация лояльности по вероятности
-        loyal = np.random.choice([1, 0], p=[prob, 1 - prob])
-
-        klienty.append({
-            "Возраст": vozrast,
-            "Покупки": pokupki,
-            "Средний чек (₽)": sredniy_chek,
-            "Акции": akcii,
-            "Оценка": otsenka,
-            "Лояльный": loyal
+        # Переименование признаков
+        df = df.rename(columns={
+            'Age': 'Возраст',
+            'Loyalty Years': 'Покупки',
+            'Annual Income (k$)': 'Средний чек (₽)',
+            'Spending Score (1-100)': 'Оценка'
         })
 
-    return pd.DataFrame(klienty)
+        # Признак "Акции" — участвовал ли в акциях (например, Luxury/Fashion)
+        df['Акции'] = df['Preferred Category'].isin(['Luxury', 'Fashion']).astype(int)
+
+        # Усложнённая логика метки "Лояльный"
+        df['Лояльный'] = (
+            (df['Покупки'] >= 5) &
+            (df['Оценка'] >= 50) &
+            (df['Средний чек (₽)'] >= 40) &
+            (df['Акции'] == 1)
+        ).astype(int)
+
+        # Добавим лёгкий шум: 10% случайных инверсий
+        flip_mask = np.random.rand(len(df)) < 0.1
+        df.loc[flip_mask, 'Лояльный'] = 1 - df.loc[flip_mask, 'Лояльный']
+
+        return df[['Возраст', 'Покупки', 'Средний чек (₽)', 'Акции', 'Оценка', 'Лояльный']]
+
+    except Exception as e:
+        print(f"❌ Ошибка при загрузке данных: {e}")
+        return None
 
 
-#  2. ВИЗУАЛИЗАЦИИ
+# 2. ВИЗУАЛИЗАЦИИ
 def create_visualizations(results, n_new):
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
     fig.suptitle(f"Анализ {n_new} клиентов", fontsize=16, weight='bold')
 
-    # Круговая диаграмма
     counts = results['Статус'].value_counts()
     colors = ['#4CAF50' if s == 'Лояльный' else '#FF9800' for s in counts.index]
     axes[0].pie(counts.values, labels=counts.index, autopct='%1.1f%%',
                 colors=colors, startangle=90)
     axes[0].set_title("Распределение клиентов")
 
-    # Гистограмма среднего чека
     axes[1].hist(results['Средний чек (₽)'], bins=10, color='#2196F3', alpha=0.7, edgecolor='black')
     axes[1].axvline(results['Средний чек (₽)'].mean(), color='red', linestyle='dashed')
     axes[1].set_title("Распределение среднего чека (₽)")
@@ -73,95 +69,81 @@ def create_visualizations(results, n_new):
     plt.show()
 
 
-#  3. РЕКОМЕНДАЦИИ
+# 3. РЕКОМЕНДАЦИИ
 def print_recommendations(results, n_new):
     risk_count = (results['Статус'] == 'В зоне риска').sum()
 
-    print(f"\n ОБЩАЯ СТАТИСТИКА:")
+    print(f"\n📊 ОБЩАЯ СТАТИСТИКА:")
     print(f"Всего проанализировано: {n_new} клиентов")
     print(f"В зоне риска: {risk_count} ({risk_count/n_new:.1%})")
 
-    print(f"\n РЕКОМЕНДАЦИИ:")
+    print(f"\n🎯 РЕКОМЕНДАЦИИ:")
     if risk_count == 0:
-        print(" Отличные показатели! Все клиенты лояльны.")
+        print("✅ Отличные показатели! Все клиенты лояльны.")
         return
 
-    print(f" Требуется внимание к {risk_count} клиентам:")
     risk_clients = results[results['Статус'] == 'В зоне риска']
-
     for idx, client in risk_clients.iterrows():
-        print(f"\n    Клиент {client['ID']}:")
+        print(f"\n👤 Клиент {client['ID']}:")
         issues = []
-
         if client['Покупки'] < 3:
             issues.append("мало покупок")
-        if client['Средний чек (₽)'] < 2000:
+        if client['Средний чек (₽)'] < 30:
             issues.append("низкий средний чек")
-        if client['Оценка'] < 3:
+        if client['Оценка'] < 40:
             issues.append("низкая оценка")
 
         if issues:
-            print(f"      • Проблемы: {', '.join(issues)}")
-            print("      • Рекомендуется: скидка 5–10%, бонусы, персональное предложение")
+            print(f"   • Проблемы: {', '.join(issues)}")
+            print("   • Рекомендуется: скидка 5–10%, бонусы, персональное предложение")
         else:
-            print("      • Общая низкая активность")
+            print("   • Общая низкая активность")
 
 
-#  4. ОСНОВНАЯ ПРОГРАММА
-print(" ML-СИСТЕМА АНАЛИЗА ЛОЯЛЬНОСТИ КЛИЕНТОВ (₽)")
+# 4. ОСНОВНАЯ ПРОГРАММА
+print("💼 ML-СИСТЕМА АНАЛИЗА ЛОЯЛЬНОСТИ КЛИЕНТОВ")
 
-data = prepare_klient_data()
-print(f" Обучающих данных: {len(data)} записей")
+data = load_mall_customer_data('Mall_Customers_Enhanced.csv')
+if data is None or data.empty:
+    print("❌ Не удалось загрузить данные.")
+    exit()
+
+print(f"📊 Обучающих данных: {len(data)} записей")
 
 X = data[['Возраст', 'Покупки', 'Средний чек (₽)', 'Акции', 'Оценка']]
 y = data['Лояльный']
 
-#  Обучение модели
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 model = RandomForestClassifier(n_estimators=200, random_state=42)
 model.fit(X_train, y_train)
-accuracy = model.score(X_test, y_test)
-print(f" Модель обучена. Реалистичная точность: {accuracy:.1%}")
+print(f"✅ Модель обучена. Точность: {model.score(X_test, y_test):.1%}")
 
-#  Анализ новых клиентов
+# Анализ новых клиентов
 try:
     n_new = int(input("\nСколько клиентов вы хотите проанализировать? "))
     new_clients = []
 
     for i in range(n_new):
-        print(f"\n Клиент {i+1}")
+        print(f"\n👤 Клиент {i+1}")
         vozrast = int(input("Возраст: "))
         pokupki = int(input("Количество покупок: "))
         sredniy_chek = float(input("Средний чек (₽): "))
         akcii = int(input("Участвовал в акциях? (1 — да, 0 — нет): "))
-        otsenka = float(input("Оценка (1-5): "))
+        otsenka = float(input("Оценка (1–100): "))
 
         new_clients.append([vozrast, pokupki, sredniy_chek, akcii, otsenka])
 
-    new_df = pd.DataFrame({
-        'Возраст': [c[0] for c in new_clients],
-        'Покупки': [c[1] for c in new_clients],
-        'Средний чек (₽)': [c[2] for c in new_clients],
-        'Акции': [c[3] for c in new_clients],
-        'Оценка': [c[4] for c in new_clients],
-        'ID': [i+1 for i in range(n_new)]
-    })
+    new_df = pd.DataFrame(new_clients, columns=['Возраст', 'Покупки', 'Средний чек (₽)', 'Акции', 'Оценка'])
+    new_df['ID'] = range(1, n_new + 1)
 
-    probs = model.predict_proba(new_df[['Возраст', 'Покупки', 'Средний чек (₽)', 'Акции', 'Оценка']])[:, 1]
+    probs = model.predict_proba(new_df.drop(columns='ID'))[:, 1]
     statuses = ["Лояльный" if p >= 0.5 else "В зоне риска" for p in probs]
 
-    results = pd.DataFrame({
-        'ID': new_df['ID'],
-        'Возраст': new_df['Возраст'],
-        'Покупки': new_df['Покупки'],
-        'Средний чек (₽)': new_df['Средний чек (₽)'],
-        'Акции': new_df['Акции'],
-        'Оценка': new_df['Оценка'],
-        'Вероятность лояльности': [f"{p:.1%}" for p in probs],
-        'Статус': statuses
-    })
+    results = new_df.copy()
+    results['Вероятность лояльности'] = [f"{p:.1%}" for p in probs]
+    results['Статус'] = statuses
 
-    print("\n" + " РЕЗУЛЬТАТЫ АНАЛИЗА".center(80))
+    print("\n📋 РЕЗУЛЬТАТЫ АНАЛИЗА")
     print("=" * 80)
     print(results.to_string(index=False))
     print("=" * 80)
@@ -170,8 +152,8 @@ try:
     print_recommendations(results, n_new)
 
 except Exception as e:
-    print(f" Ошибка: {e}")
+    print(f"❌ Ошибка: {e}")
 
 print("\n" + "=" * 60)
-print(" Анализ завершен")
+print("Анализ завершен")
 print("=" * 60)
